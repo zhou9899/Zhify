@@ -1,11 +1,9 @@
-// enhanced-server.js - FIXED FORMATS
+// enhanced-server.js - FIXED: VIDEO WITH AUDIO MERGED
 const express = require("express");
-const axios = require("axios");
 const { exec } = require("child_process");
 const util = require("util");
 
-const execPromise = util.promisify(exec); // Better error handling
-
+const execPromise = util.promisify(exec);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -44,14 +42,14 @@ app.use((req, res, next) => {
 // ================== FIXED FORMAT MAPPING ==================
 const formatPresets = {
   // Audio formats
-  "mp3": "bestaudio[ext=webm]/bestaudio --extract-audio --audio-format mp3",
-  "m4a": "bestaudio[ext=m4a]/bestaudio --extract-audio --audio-format m4a",
-  "aac": "bestaudio --extract-audio --audio-format aac",
+  "mp3": "bestaudio[ext=webm]/bestaudio",
+  "m4a": "bestaudio[ext=m4a]/bestaudio",
+  "aac": "bestaudio",
   "opus": "bestaudio[ext=webm]",
-  "flac": "bestaudio --extract-audio --audio-format flac",
-  "wav": "bestaudio --extract-audio --audio-format wav",
-  
-  // Video formats - FIXED: Use proper syntax
+  "flac": "bestaudio",
+  "wav": "bestaudio",
+
+  // Video formats - Use combined format codes
   "144p": "bestvideo[height<=144]+bestaudio/best[height<=144]",
   "240p": "bestvideo[height<=240]+bestaudio/best[height<=240]",
   "360p": "bestvideo[height<=360]+bestaudio/best[height<=360]",
@@ -60,119 +58,83 @@ const formatPresets = {
   "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
   "1440p": "bestvideo[height<=1440]+bestaudio/best[height<=1440]",
   "2160p": "bestvideo[height<=2160]+bestaudio/best[height<=2160]",
-  
+
   // Special formats
   "best": "bestvideo+bestaudio/best",
   "worst": "worstvideo+worstaudio/worst",
-  
-  // Container formats
   "mp4": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]",
   "webm": "bestvideo[ext=webm]+bestaudio[ext=webm]/best[ext=webm]",
-  "mkv": "bestvideo+bestaudio",
-  "avi": "best[ext=avi]",
-  "3gp": "best[ext=3gp]"
+  "mkv": "bestvideo+bestaudio/best"
 };
 
-// ================== DOWNLOAD API - FIXED ==================
+// ================== DOWNLOAD API - STREAMS MERGED VIDEO ==================
 app.get("/download", async (req, res) => {
-  const { videoId, format = "best" } = req.query;
+  const { videoId, format = "best", stream = "true" } = req.query;
   if (!videoId) return res.status(400).json({ error: "Missing videoId" });
 
   const url = `https://www.youtube.com/watch?v=${videoId}`;
-  
-  // Get format preset or use default
   const fmt = formatPresets[format] || formatPresets.best;
-  
+
   try {
-    // For audio formats that need extraction
-    if (["mp3", "m4a", "aac", "flac", "wav"].includes(format)) {
-      // Try extraction first
-      const cmd = `yt-dlp -f "${fmt}" -g --no-playlist "${url}"`;
-      console.log("Audio command:", cmd);
+    console.log(`Processing: ${videoId}, Format: ${format}`);
+    
+    // ALWAYS stream merged content (since ffmpeg is installed)
+    let cmd;
+    
+    if (["mp3", "m4a", "aac", "flac", "wav", "opus"].includes(format)) {
+      // Audio extraction with ffmpeg
+      const audioFormat = format === "opus" ? "opus" : format;
+      cmd = `yt-dlp -f "${fmt}" --extract-audio --audio-format ${audioFormat} -o - "${url}"`;
       
-      const { stdout, stderr } = await execPromise(cmd);
-      
-      if (stderr && stderr.includes("ffmpeg") && stderr.includes("not found")) {
-        // Fallback to direct audio URL if ffmpeg not available
-        const fallbackCmd = `yt-dlp -f "bestaudio" -g --no-playlist "${url}"`;
-        const { stdout: audioStdout } = await execPromise(fallbackCmd);
-        
-        return res.json({
-          videoId,
-          format: `${format} (direct stream)`,
-          downloadUrl: audioStdout.trim(),
-          expires: "≈ 6 hours",
-          note: "Direct audio stream - convert with ffmpeg if needed"
-        });
-      }
-      
-      res.json({
-        videoId,
-        format,
-        downloadUrl: stdout.trim(),
-        expires: "≈ 6 hours"
-      });
+      res.setHeader('Content-Type', 
+        format === 'mp3' ? 'audio/mpeg' : 
+        format === 'm4a' ? 'audio/mp4' : 
+        format === 'aac' ? 'audio/aac' : 
+        format === 'flac' ? 'audio/flac' : 
+        format === 'wav' ? 'audio/wav' : 
+        'audio/ogg'
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="youtube_${videoId}.${format}"`);
       
     } else {
-      // For video formats - get direct URLs
-      const cmd = `yt-dlp -f "${fmt}" -g --no-playlist "${url}"`;
-      console.log("Video command:", cmd);
+      // Video with audio merge using ffmpeg
+      const outputFormat = format === "webm" ? "webm" : "mp4";
+      cmd = `yt-dlp -f "${fmt}" --merge-output-format ${outputFormat} -o - "${url}"`;
       
-      const { stdout, stderr } = await execPromise(cmd);
-      
-      if (stderr && !stderr.includes("WARNING:")) {
-        console.error("yt-dlp error:", stderr);
-      }
-      
-      const urls = stdout.trim().split('\n');
-      
-      // Return appropriate response
-      if (urls.length === 1) {
-        res.json({
-          videoId,
-          format,
-          downloadUrl: urls[0],
-          expires: "≈ 6 hours"
-        });
-      } else if (urls.length === 2) {
-        res.json({
-          videoId,
-          format,
-          videoUrl: urls[0], // Usually video
-          audioUrl: urls[1], // Usually audio
-          expires: "≈ 6 hours",
-          note: "Separate video and audio streams. Merge with ffmpeg"
-        });
-      } else {
-        res.json({
-          videoId,
-          format,
-          downloadUrls: urls,
-          expires: "≈ 6 hours"
-        });
-      }
+      res.setHeader('Content-Type', outputFormat === 'webm' ? 'video/webm' : 'video/mp4');
+      res.setHeader('Content-Disposition', `attachment; filename="youtube_${videoId}.${outputFormat}"`);
     }
+    
+    console.log("Stream command:", cmd);
+    
+    // Stream the merged content directly
+    const childProcess = exec(cmd);
+    
+    // Pipe to response
+    childProcess.stdout.pipe(res);
+    
+    // Handle errors
+    childProcess.stderr.on('data', (data) => {
+      console.error('yt-dlp stderr:', data.toString());
+    });
+    
+    childProcess.on('error', (error) => {
+      console.error('Process error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Download failed", details: error.message });
+      }
+    });
+    
+    childProcess.on('close', (code) => {
+      console.log(`Process exited with code ${code}`);
+    });
     
   } catch (error) {
     console.error("Download error:", error);
-    
-    // Try fallback
-    try {
-      const fallbackCmd = `yt-dlp -f "best" -g --no-playlist "${url}"`;
-      const { stdout } = await execPromise(fallbackCmd);
-      
-      res.json({
-        videoId,
-        format: "best (fallback)",
-        downloadUrl: stdout.trim(),
-        expires: "≈ 6 hours"
-      });
-    } catch (fallbackError) {
-      res.status(500).json({ 
-        error: "Failed to get download URL",
-        details: error.message
-      });
-    }
+    res.status(500).json({ 
+      error: "Failed to process download",
+      details: error.message
+    });
   }
 });
 
@@ -184,11 +146,10 @@ app.get("/formats", async (req, res) => {
   try {
     const cmd = `yt-dlp -F "https://www.youtube.com/watch?v=${videoId}"`;
     const { stdout } = await execPromise(cmd);
-    
-    // Parse yt-dlp format list
+
     const lines = stdout.split('\n');
     const formats = [];
-    
+
     for (const line of lines) {
       if (line.match(/^\s*\d+/)) {
         const parts = line.trim().split(/\s+/);
@@ -202,34 +163,34 @@ app.get("/formats", async (req, res) => {
         }
       }
     }
-    
+
     res.json({
       videoId,
       availableFormats: formats,
-      presets: Object.keys(formatPresets)
+      presets: Object.keys(formatPresets),
+      note: "All downloads include merged video+audio (ffmpeg installed)"
     });
-    
+
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// ================== OTHER ROUTES (keep existing) ==================
-// [Your existing search, info, cache routes remain unchanged]
-
 // ================== HEALTH CHECK ==================
 app.get("/", (req, res) => {
   res.json({
     service: "YouTube Download API",
-    version: "2.0-fixed",
+    version: "3.0-merged",
+    endpoint: "/download?videoId=ID&format=FORMAT&key=API_KEY",
     availableFormats: Object.keys(formatPresets),
-    example: `/download?videoId=dQw4w9WgXcQ&format=720p&key=${API_KEY}`,
-    note: "Fixed format mapping for accurate quality selection"
+    example: `https://zhify-production.up.railway.app/download?videoId=dQw4w9WgXcQ&format=720p&key=${API_KEY}`,
+    note: "Downloads merged video+audio automatically (ffmpeg installed)"
   });
 });
 
 // ================== START ==================
 app.listen(PORT, () => {
   console.log(`🚀 API READY → http://localhost:${PORT}`);
+  console.log(`✅ ffmpeg is installed - videos include audio!`);
   console.log(`📝 Available formats: ${Object.keys(formatPresets).join(', ')}`);
 });
