@@ -531,7 +531,7 @@ app.get("/", (req, res) => {
       button { padding: 15px 30px; font-size: 16px; background: #4CAF50; color: white; border: none; border-radius: 8px; cursor: pointer; }
       button:hover { background: #45a049; }
       .examples { margin-top: 40px; text-align: left; background: #f8f9fa; padding: 20px; border-radius: 10px; }
-            .example-link { display: block; margin: 10px 0; padding: 10px; background: #e3f2fd; border-radius: 5px; text-decoration: none; color: #1565c0; }
+      .example-link { display: block; margin: 10px 0; padding: 10px; background: #e3f2fd; border-radius: 5px; text-decoration: none; color: #1565c0; }
       .example-link:hover { background: #bbdefb; }
       .features { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-top: 30px; }
       .feature { background: #f5f5f5; padding: 20px; border-radius: 10px; }
